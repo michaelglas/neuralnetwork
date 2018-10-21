@@ -1,3 +1,7 @@
+# Testdata
+testdata/kops_155rflot_1984-1996/*.csv
+testdata/kops_155rflot_1984-1996/*.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
