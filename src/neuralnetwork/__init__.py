@@ -139,7 +139,7 @@ class layeredneuralnetwork(neuralnetwork):
         self.weights = wheights
     # genetic algorithm
     def train(self, inputs, outputs, its, gensize, offset, offset_drop, fitness_func, mutation_rate):
-        nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(self.bias, offset), random_offset_nested(self.weights, offset)) for i in range(gensize)]
+        nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(self.bias, offset, mutation_rate), random_offset_nested(self.weights, offset, mutation_rate)) for i in range(gensize)]
         old_offset = offset
         train_len = 0
         for i in inputs:
@@ -167,7 +167,7 @@ class layeredneuralnetwork(neuralnetwork):
                     best_nn = nn
             total = cum_weights[-1]
             parents = (nns[bisect.bisect(cum_weights, random.random() * total, 0, gensize)] for j in range(gensize))
-            nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(parent.bias, offset), random_offset_nested(parent.weights, offset)) for parent in parents]
+            nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(parent.bias, offset, mutation_rate), random_offset_nested(parent.weights, offset, mutation_rate)) for parent in parents]
             offset = old_offset
             for j in range(i//offset_drop):
                 offset /= 1.2
