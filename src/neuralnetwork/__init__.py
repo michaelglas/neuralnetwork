@@ -13,18 +13,14 @@ class better_zip:
     def __init__(self,*iter):
         self.iter = iter
     def __next__(self):
-        stopped = []
         res = []
+        stopped = False
         for it in self.iter:
             try:
                 res.append(next(it))
             except StopIteration:
-                stopped.append(True)
-            else:
-                stopped.append(False)
-        if True in stopped:
-            if False in stopped:
-                raise TypeError("help help")
+                stopped = True
+        if stopped:
             raise StopIteration
         return tuple(res)
     def __iter__(self):
@@ -38,18 +34,21 @@ def sigmoid(x):
         z = math.exp(x)
         return z / (1 + z)
 
-def random_offset(it,min_offset):
-    for i in it:
-        yield i+random.randint(-10,10)*min_offset
-
-def random_offset_nested(it,min_offset):
+def _random_offset_nested(it,max_offset,mutation_rate):
     ret = []
     for i in it:
         if isinstance(i, (int,float)):
-            ret.append(i+random.randint(-10,10)*min_offset)
+            if random.randrange(mutation_rate)<1:
+                ret.append(i+random.random()-0.5*max_offset)
+            else:
+                ret.append(i)
         else:
-            ret.append(random_offset_nested(i, min_offset))
+            ret.append(random_offset_nested(i, max_offset, mutation_rate))
     return ret
+
+def random_offset_nested(it,max_offset,mutation_rate):
+    max_offset *= 2
+    return _random_offset_nested(it, max_offset, mutation_rate)
         
 
 class NeuralNetworkEncoder(json.JSONEncoder):
@@ -138,34 +137,42 @@ class layeredneuralnetwork(neuralnetwork):
     def set_values(self,bias,wheights):
         self.bias = bias
         self.weights = wheights
-    def train(self, inputs, outputs, its, gensize, offset, offset_drop, cost_func):
+    # genetic algorithm
+    def train(self, inputs, outputs, its, gensize, offset, offset_drop, fitness_func, mutation_rate):
         nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(self.bias, offset), random_offset_nested(self.weights, offset)) for i in range(gensize)]
         old_offset = offset
+        train_len = 0
+        for i in inputs:
+            train_len+=1
+        ol = 0
+        for i in outputs:
+            ol+=1
+        if train_len!=ol:
+            raise ValueError("inputs and outputs are not the same length")
+        
+        best_nn = 0
+        best_fitness = 0
         for i in range(its):
             print("please let this computer run")
-            INDEX = i
-            nns_cost = []
+            cum_weights = []
+            old_weight = 0
             for nn in nns:
-                nn_costs = []
+                nn_fitnesses = 0
                 for inp,out in better_zip(inputs,outputs):
-                    nn_costs.append(cost_func(nn.calculate(*inp),out))
-                bisect.insort(nns_cost,(statistics.mean(nn_costs),nn))
-            try:
-                if nns_cost[0][0]<best_nn[0]:  # @UndefinedVariable
-                    best_nn=nns_cost[0]
-            except NameError:
-                best_nn=nns_cost[0]
-            nns = []
-            for j in nns_cost[:len(nns_cost)//2]:
-                nns.append(layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(j[1].bias, offset), random_offset_nested(j[1].weights, offset)))
-                nns.append(layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(j[1].bias, offset), random_offset_nested(j[1].weights, offset)))
-            if len(nns)!=gensize:
-                nns.append(layeredneuralnetwork(*self.layers,act=self.act))
+                    nn_fitnesses += fitness_func(nn.calculate(*inp),out)
+                fitness = nn_fitnesses/train_len
+                cum_weights.append(old_weight+fitness)
+                if fitness>best_fitness:
+                    best_fitness = fitness
+                    best_nn = nn
+            total = cum_weights[-1]
+            parents = (nns[bisect.bisect(cum_weights, random.random() * total, 0, gensize)] for j in range(gensize))
+            nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(parent.bias, offset), random_offset_nested(parent.weights, offset)) for parent in parents]
             offset = old_offset
             for j in range(i//offset_drop):
                 offset /= 1.2
             print("iteration %s of %s successful"%(i,its))
-        self.set_values(best_nn[1].bias,best_nn[1].weights)
+        self.set_values(best_nn.bias,best_nn.weights)
     def __lt__(self, b):
         return False
     def __le__(self, b):
@@ -177,13 +184,4 @@ class layeredneuralnetwork(neuralnetwork):
     def __ge__(self, b):
         return True
     def __gt__(self, b):
-        return False
-        
-            
-                    
-                    
-        
-    
-
-
-            
+        return False            
