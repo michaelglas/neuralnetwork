@@ -17,11 +17,32 @@ def sigmoid(x):
         z = numpy.exp(x)
         return z / (1 + z)
 """
-def sigmoid(x):
-    s = 1/(1+numpy.exp(-x))
-    return s
 
-ACT_FUNCS = {"sigmoid":sigmoid}
+class sigmoid:
+
+    def __call__(self,x):
+        s = 1/(1+numpy.exp(-x))
+        return s
+
+    def derivative(self,x):
+        s = self(x)
+        return numpy.multiply(s,1.0-s)
+
+class identity:
+
+    def __call__(self,x):
+        return x
+
+    def derivative(self,x):
+        if isinstance(x,numpy.matrix):
+            return numpy.ones_like(x)
+        else:
+            return 1.0
+
+ACT_FUNCS = {
+    "sigmoid":sigmoid(),
+    "identity":identity()
+}
 
 def _random_offset_matrix(it,max_offset,mutation_rate):
     ret = numpy.empty_like(it)
@@ -83,7 +104,7 @@ def NeuralNetworkDecoder(d):
         return ret
 
 class neuralnetwork:
-    def __init__(self,neurons,input,output,act=sigmoid):
+    def __init__(self,neurons,input,output,act=ACT_FUNCS["sigmoid"]):
         raise NotImplementedError()
         self.input = input
         self.output = output
@@ -103,32 +124,149 @@ class neuralnetwork:
         pass
 
 class layeredneuralnetwork(neuralnetwork):
-    def __init__(self,*layers,act=sigmoid):
+    def __init__(self,*layers,act=ACT_FUNCS["sigmoid"]):
         if len(layers)<2:
             raise ValueError
         self.layers=layers
         self.act=act
         #self.bias = [[random.randrange(-i,i) for j in range(i)] for i in layers]
-        self.weights = [numpy.matrix(numpy.random.rand(layers[i+1],l)) for i,l in enumerate(layers[:-1])]
+        self.weights = [numpy.matrix(numpy.random.rand(l,layers[i+1])) for i,l in enumerate(layers[:-1])]
         self.fitness = 0
+        
     def calculate(self, input):  # @ReservedAssignment
+        '''
+           calculate row-wise results of given row-wise input values.
+           
+           :param input: a matrix with layers[0] columns representing a set of nrows input values.
+           :return: A matrix with layers[-1] columns representing a set of nrows output values.
+        '''
         values = input
         # iterate over layers
-        for i in self.weights[:-1]:
-            values = self.act(i*values)
-        return self.weights[-1]*values
+        
+        #     o_j=phi (net_j)
+        #     net_j=sum_{i=1,n} x_i * w_ij
+        for w in self.weights:
+            values = self.act(values*w)
+        return values
+    
+    
+    def calculate_error(self,input,expected_output):  # @ReservedAssignment
+        '''
+           calculate the overall half square sum of the difference of a given set of training data
+           composed of a set of input values and a set of associated expected output values.
+           
+           :param input: a matrix with layers[0] columns representing a set of nrows input values.
+           :param expected_output: a matrix with layers[-1] columns representing a set of nrows expected
+                        output values.
+           :return: A matrix with layers[-1] columns representing a set of nrows output values.
+        '''
+        
+        r = self.calculate(input)
+        
+        if r.shape != expected_output.shape:
+            raise ValueError("Shape of expected output (%s) is not equal to (%s)"%(expected_output.shape,r.shape))
+        
+        d = r - expected_output
+        
+        return 0.5 * numpy.sum(numpy.square(d))
+    
+    def calculate_deltas(self,input,expected_output):  # @ReservedAssignment
+        '''
+           calculate the derivatives of the overall half square sum of the difference of
+           a given set of training data composed of a set of input values and a set of
+           associated expected output values.
+           
+           Derivatives are calculated w.r.t all weights, i.e. a list of array with the same dimensions
+           as the weight matrices is returned. 
+           
+           :param input: a matrix with layers[0] columns representing a set of nrows input values.
+           :param expected_output: a matrix with layers[-1] columns representing a set of nrows expected
+                        output values.
+           :return: A matrix with layers[-1] columns representing a set of nrows output values.
+        '''
+        
+        # accumulate net_j matrices
+        net_matrices = []
+        
+        values = [ input ]
+        
+        v = input
+        # iterate over layers
+        
+        #     o_j=phi (net_j)
+        #     net_j=sum_{i=1,n} x_i * w_ij
+        for w in self.weights:
+            net = v*w
+            v = self.act(net)
+            net_matrices.append(net)
+            values.append(v)
+        
+        # net_j=sum_{i=1,n} x_i * w_ij
+        
+        # output layer:
+        # delta_j = phi'(net_j)*(o_j-t_j)
+        
+        # d E/ d w_ij = delta_j * v_i
+        
+        dw = []
+        
+        d = values[-1]-expected_output
+        
+        # column of derivative of error E w.r.t. net_k 
+        deltas = numpy.multiply(d,self.act.derivative(net_matrices[-1]))
+
+        #print ("d = %s"%d)
+        #print ("net_matrices[-1] = %s"%net_matrices[-1])
+        #print ("deltas = %s"%deltas)
+        
+        
+        dw.append(values[-2].T * deltas)
+        
+        # hidden layer:
+        # delta_j = phi'(net_j)* sum_{k=1,l} w_jk * delta_k
+        
+        for j in range(len(self.weights)-1,0,-1):
+            
+            w = self.weights[j]
+            #print ("w = %s"%w)
+            #print ("net_matrices[j-1] = %s"%net_matrices[j-1])
+            deltas = numpy.multiply(deltas * w.T,self.act.derivative(net_matrices[j-1]))
+        
+            dw.append(values[j-1].T * deltas)
+        
+        
+        dw.reverse()
+        return dw
+        
+        
     @classmethod
-    def from_values(cls,layers,act,wheights):
+    def from_values(cls,layers,act,weights):
         self = cls.__new__(cls)
         self.layers=layers
+        
+        if len(weights)+1 != len(layers):
+            raise ValueError("Number of weight matrices (%s) is not equal to the number of layers (%s) minus one."%
+                             (len(weights),len(layers)))
+            
+        for i,w in enumerate(weights):
+            
+            expected_shape = (layers[i],layers[i+1])
+            
+            if w.shape != expected_shape:
+                raise ValueError("Shape of weight matrix in layer %s (%s) is not equal to (%s)."%
+                             (i,w.shape,expected_shape))
+        
         self.act=act
         #self.bias = bias
-        self.weights = wheights
+        self.weights = weights
+        
         return self
+    
     def set_values(self,wheights,fitness):
         #self.bias = bias
         self.weights = wheights
         self.fitness = fitness
+    
     # genetic algorithm
     def train(self, its, gensize, offset, offset_drop, fitness_func, mutation_rate):
         nns = [layeredneuralnetwork.from_values(self.layers, self.act, random_offset_nested(self.weights, offset, mutation_rate)) for i in range(gensize)]
